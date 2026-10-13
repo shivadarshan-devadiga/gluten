@@ -301,6 +301,32 @@ class JsonFunctionsValidateSuite extends FunctionsValidateSuite {
     }
   }
 
+  test("from_json keeps the case of schema field names") {
+    withTempPath {
+      path =>
+        // Velox matches JSON keys case-insensitively, so the keys use the same case as the schema.
+        Seq[String](
+          """{"Id":"10", "Inner":{"Name":"a"}, "Items":[{"Key":1}], "M":{"k":{"V":2}}}""",
+          """{"Id":"11", "Inner":{"Name":"b"}, "Items":[{"Key":3}], "M":{"k":{"V":4}}}"""
+        )
+          .toDF("txt")
+          .write
+          .parquet(path.getCanonicalPath)
+
+        spark.read.parquet(path.getCanonicalPath).createOrReplaceTempView("tbl")
+
+        val schema = "Id STRING, Inner STRUCT<Name: STRING>, " +
+          "Items ARRAY<STRUCT<Key: INT>>, M MAP<STRING, STRUCT<V: INT>>"
+        runQueryAndCompare(s"select from_json(txt, '$schema') from tbl") {
+          checkGlutenPlan[ProjectExecTransformer]
+        }
+        runQueryAndCompare(
+          s"select if(txt like '%10%', from_json(txt, '$schema'), null) from tbl") {
+          checkGlutenPlan[ProjectExecTransformer]
+        }
+    }
+  }
+
   test("from_json function CORRUPT_RECORD") {
     withTempPath {
       path =>

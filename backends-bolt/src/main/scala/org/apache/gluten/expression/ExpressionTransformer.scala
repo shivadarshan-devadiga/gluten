@@ -28,7 +28,6 @@ import org.apache.spark.sql.types.{IntegerType, LongType, TimestampType}
 import java.lang.{Integer => JInteger}
 import java.util.{ArrayList => JArrayList}
 
-import scala.collection.JavaConverters._
 import scala.language.existentials
 
 case class BoltAliasTransformer(
@@ -74,35 +73,6 @@ case class BoltGetStructFieldTransformer(
         ExpressionBuilder.makeNullLiteral(nodeType)
       case _ =>
         super.doTransform(context)
-    }
-  }
-}
-
-/**
- * Bolt's from_json matches JSON keys against the schema field names case-sensitively, as Spark does
- * regardless of `spark.sql.caseSensitive`, so the field names must not be lowercased. The result is
- * then cast (by position) to the type the rest of the plan uses, as Bolt compares struct field
- * names in some type checks, e.g. the branches of `if`.
- */
-case class BoltFromJsonTransformer(
-    substraitExprName: String,
-    children: Seq[ExpressionTransformer],
-    original: JsonToStructs)
-  extends ExpressionTransformer {
-
-  override def doTransform(context: SubstraitContext): ExpressionNode = {
-    val funcName =
-      ConverterUtils.makeFuncName(substraitExprName, original.children.map(_.dataType))
-    val functionId = context.registerFunction(funcName)
-    val childNodes = children.map(_.doTransform(context)).asJava
-    val schemaTypeNode =
-      ConverterUtils.getTypeNode(dataType, nullable, structFieldToLowerCase = false)
-    val fromJsonNode = ExpressionBuilder.makeScalarFunction(functionId, childNodes, schemaTypeNode)
-    val planTypeNode = ConverterUtils.getTypeNode(dataType, nullable)
-    if (planTypeNode.toProtobuf == schemaTypeNode.toProtobuf) {
-      fromJsonNode
-    } else {
-      ExpressionBuilder.makeCast(planTypeNode, fromJsonNode, false)
     }
   }
 }

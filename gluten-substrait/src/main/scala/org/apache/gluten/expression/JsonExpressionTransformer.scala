@@ -21,9 +21,11 @@ import org.apache.gluten.substrait.`type`.ListNode
 import org.apache.gluten.substrait.SubstraitContext
 import org.apache.gluten.substrait.expression.{ExpressionBuilder, ExpressionNode}
 
-import org.apache.spark.sql.catalyst.expressions.{Expression, StructsToJson}
+import org.apache.spark.sql.catalyst.expressions.{Expression, JsonToStructs, StructsToJson}
 
 import com.google.common.collect.Lists
+
+import scala.collection.JavaConverters._
 
 case class JsonTupleExpressionTransformer(
     substraitExprName: String,
@@ -62,5 +64,34 @@ case class ToJsonTransformer(
   override def children: Seq[ExpressionTransformer] = {
     val timeZoneId = original.timeZoneId.map(timeZoneId => LiteralTransformer(timeZoneId))
     Seq(child) ++ timeZoneId
+  }
+}
+
+/**
+ * Spark's from_json matches JSON keys against the schema field names case-sensitively, whatever
+ * `spark.sql.caseSensitive` is, so the schema passed to the native function keeps the original
+ * field names. The result is then cast (by position) to the type the rest of the plan uses, as the
+ * native side compares struct field names in some type checks, e.g. the branches of `if`.
+ */
+case class FromJsonTransformer(
+    substraitExprName: String,
+    children: Seq[ExpressionTransformer],
+    original: JsonToStructs)
+  extends ExpressionTransformer {
+
+  override def doTransform(context: SubstraitContext): ExpressionNode = {
+    val funcName =
+      ConverterUtils.makeFuncName(substraitExprName, original.children.map(_.dataType))
+    val functionId = context.registerFunction(funcName)
+    val childNodes = children.map(_.doTransform(context)).asJava
+    val schemaTypeNode =
+      ConverterUtils.getTypeNode(dataType, nullable, structFieldToLowerCase = false)
+    val fromJsonNode = ExpressionBuilder.makeScalarFunction(functionId, childNodes, schemaTypeNode)
+    val planTypeNode = ConverterUtils.getTypeNode(dataType, nullable)
+    if (planTypeNode.toProtobuf == schemaTypeNode.toProtobuf) {
+      fromJsonNode
+    } else {
+      ExpressionBuilder.makeCast(planTypeNode, fromJsonNode, false)
+    }
   }
 }
