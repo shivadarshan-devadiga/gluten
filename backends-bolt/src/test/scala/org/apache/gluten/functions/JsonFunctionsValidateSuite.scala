@@ -19,6 +19,7 @@ package org.apache.gluten.functions
 import org.apache.gluten.execution.ProjectExecTransformer
 
 import org.apache.spark.sql.execution.ProjectExec
+import org.apache.spark.sql.internal.SQLConf
 
 class JsonFunctionsValidateSuite extends FunctionsValidateSuite {
 
@@ -297,6 +298,37 @@ class JsonFunctionsValidateSuite extends FunctionsValidateSuite {
 
         runQueryAndCompare("select from_json(txt, 'Id STRING, Value STRING') from tbl") {
           checkGlutenPlan[ProjectExecTransformer]
+        }
+    }
+  }
+
+  test("from_json keeps the case of schema field names") {
+    withTempPath {
+      path =>
+        Seq[String](
+          """{"Id":"10", "Inner":{"Name":"a"}, "Items":[{"Key":1}], "M":{"k":{"V":2}}}""",
+          """{"id":"11", "inner":{"name":"b"}, "items":[{"key":3}], "m":{"k":{"v":4}}}"""
+        )
+          .toDF("txt")
+          .write
+          .parquet(path.getCanonicalPath)
+
+        spark.read.parquet(path.getCanonicalPath).createOrReplaceTempView("tbl")
+
+        val schema = "Id STRING, Inner STRUCT<Name: STRING>, " +
+          "Items ARRAY<STRUCT<Key: INT>>, M MAP<STRING, STRUCT<V: INT>>"
+        // Spark's from_json matches keys case-sensitively whatever spark.sql.caseSensitive is.
+        Seq("false", "true").foreach {
+          caseSensitive =>
+            withSQLConf(SQLConf.CASE_SENSITIVE.key -> caseSensitive) {
+              runQueryAndCompare(s"select from_json(txt, '$schema') from tbl") {
+                checkGlutenPlan[ProjectExecTransformer]
+              }
+              runQueryAndCompare(
+                s"select if(txt like '%Id%', from_json(txt, '$schema'), null) from tbl") {
+                checkGlutenPlan[ProjectExecTransformer]
+              }
+            }
         }
     }
   }

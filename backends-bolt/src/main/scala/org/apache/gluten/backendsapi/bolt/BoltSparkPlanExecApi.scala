@@ -858,11 +858,6 @@ class BoltSparkPlanExecApi extends SparkPlanExecApi {
         ExpressionNames.FROM_JSON,
         FromJsonRestrictions.NOT_SUPPORT_WITH_OPTIONS)
     }
-    if (SQLConf.get.caseSensitiveAnalysis) {
-      GlutenExceptionUtil.throwsNotFullySupported(
-        ExpressionNames.FROM_JSON,
-        FromJsonRestrictions.NOT_SUPPORT_CASE_SENSITIVE)
-    }
 
     val hasDuplicateKey = expr.schema match {
       case s: StructType =>
@@ -893,7 +888,7 @@ class BoltSparkPlanExecApi extends SparkPlanExecApi {
         ExpressionNames.FROM_JSON,
         FromJsonRestrictions.NOT_SUPPORT_COLUMN_CORRUPT_RECORD)
     }
-    GenericExpressionTransformer(substraitExprName, children, expr)
+    BoltFromJsonTransformer(substraitExprName, children, expr)
   }
 
   /** Generate an expression transformer to transform StructsToJson to Substrait. */
